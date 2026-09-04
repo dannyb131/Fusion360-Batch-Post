@@ -22,6 +22,78 @@ These options are available when **Use individual operations** is enabled in
 the **Personal Use** section. Always inspect and safely test generated G-code
 before running it on a CNC machine.
 
+#### CNCjs single-pause tool setter example
+
+The following example performs the complete tool change without `M6`. CNCjs
+pauses once at `M0`, the operator fits the requested tool and clicks
+**Continue**, and the program then probes the tool, sets Z zero relative to the
+machine bed, retracts, and continues.
+
+> **Machine-specific example:** the positions and setter height below belong to
+> one particular machine. Do not run this unchanged on another machine. Verify
+> all coordinates, available travel, probe wiring, and clearance first. Test
+> with the spindle off and be ready to use Feed Hold.
+
+Paste this into **Replacement for T# M6** as one line:
+
+```text
+M5:M9:G53 G0 Z-5:G53 G0 X20 Y20:M0 (Install tool T{tool} then click Continue):G53 G0 Z-5:G53 G0 X229.500 Y162.000:G91:G38.2 Z-40 F100:%wait:G0 Z2:G38.2 Z-3 F20:%wait:G90:G54:G92 Z36.584:%wait:G91:G0 Z4:G90:G53 G0 Z-5
+```
+
+The colons are converted into separate G-code lines by Post Process All. The
+example uses these measured machine settings:
+
+| Setting | Value |
+| --- | ---: |
+| Tool-change position | X20, Y20 |
+| Safe machine Z | -5 mm |
+| Tool setter position | X229.500, Y162.000 |
+| Tool setter surface above bed | 36.584 mm |
+| Initial probe search | 40 mm at 100 mm/min |
+| Fine probe search | 3 mm at 20 mm/min |
+| Retraction between probes | 2 mm |
+| Final retraction | 4 mm, followed by safe machine Z |
+
+Command-by-command explanation:
+
+| Command | Purpose |
+| --- | --- |
+| `M5` | Stops the spindle before the tool is handled. |
+| `M9` | Turns off coolant. |
+| `G53 G0 Z-5` | Raises Z to the safe position using machine coordinates. |
+| `G53 G0 X20 Y20` | Moves to the manual tool-change position in machine coordinates. |
+| `M0 (...)` | Creates the one operator pause. Fit the tool and click **Continue** in CNCjs. |
+| `G53 G0 X229.500 Y162.000` | Moves over the fixed tool setter in machine coordinates. |
+| `G91` | Selects incremental movement for the probing distances. |
+| `G38.2 Z-40 F100` | Searches downward for the setter at 100 mm/min and errors if contact is not made within 40 mm. |
+| `%wait` | CNCjs directive that waits for the controller to finish the preceding stage. It is not a GRBL G-code command. |
+| `G0 Z2` | Retracts 2 mm from the first contact while still in incremental mode. |
+| `G38.2 Z-3 F20` | Probes again slowly for a more repeatable measurement. |
+| `G90` | Returns to absolute movement. |
+| `G54` | Selects work coordinate system G54 before setting its effective Z reference. |
+| `G92 Z36.584` | Declares that the setter contact surface is 36.584 mm above work Z0, placing work Z0 at the bed. |
+| `G91 G0 Z4` | Retracts 4 mm from the setter. |
+| `G90` | Restores absolute movement for the machining program. |
+| `G53 G0 Z-5` | Returns Z to the safe machine-coordinate height before machining continues. |
+
+Enable **Include first tool change** to run this sequence for the initial tool
+as well as later tools. Leave **G-code for tool change** blank so it does not
+insert a second pause. Because the generated sequence contains no `M6`, the
+CNCjs automatic tool-change policy is not used.
+
+This example assumes Fusion and G54 use the **machine bed as work Z0**. `G92`
+is used because some GRBL-compatible controllers reject `G10 L20`. The G92
+offset is temporary and is deliberately renewed after every tool is probed.
+Before starting a different setup or manually setting Z again, clear the old
+temporary offset with:
+
+```gcode
+G92.1
+```
+
+Do not run `G92.1` between tool changes in the same program, because that would
+remove the measured Z reference.
+
 ### Introduction
 This add-in for Fusion will post process all CAM setups, or any
 selection of setups you choose, at once.
