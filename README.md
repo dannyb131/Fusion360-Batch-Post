@@ -1,6 +1,27 @@
 # Post Process All: Fusion CAM Batch Post Add-In
 ### New in Version 2: All post processor options are available through `NC Programs`
 
+### Changes in this fork
+
+This fork adds configurable tool-change output for controllers and senders such
+as GRBL and CNCjs. Fusion's original `T# M6` command can now be replaced with a
+command chosen by the user in the **Replacement for T# M6** field.
+
+- Use `{tool}` wherever the actual Fusion tool number is required. For example,
+  `T{tool} M6` produces `T2 M6` when the operation uses tool 2.
+- Separate commands with a colon to produce multiple G-code lines. For example,
+  `M5:T{tool} M6` produces `M5` followed by `T2 M6`.
+- Leave the replacement field blank to remove `T# M6` from the output.
+- Enable **Include first tool change** to output the command for the first
+  operation. Leave it disabled to omit only the initial tool change.
+- The first operation is identified by its position in the program, not by its
+  tool number. The feature therefore works when T2, T7, or another tool is used
+  first.
+
+These options are available when **Use individual operations** is enabled in
+the **Personal Use** section. Always inspect and safely test generated G-code
+before running it on a CNC machine.
+
 ### Introduction
 This add-in for Fusion will post process all CAM setups, or any
 selection of setups you choose, at once.
