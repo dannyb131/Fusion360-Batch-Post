@@ -5,7 +5,7 @@ import adsk.core, adsk.fusion, adsk.cam, traceback, shutil, json, os, os.path, t
 
 # Version number of settings as saved in documents and settings file
 # update this whenever settings content changes
-version = 11
+version = 13
 
 # Initial default values of settings
 defaultSettings = {
@@ -20,6 +20,8 @@ defaultSettings = {
     "combineTool" : False,
     "fastZ" : False,
     "toolChange" : "M9 G30",
+    "toolCommand" : "T{tool} M6",
+    "includeFirstToolChange" : False,
     "numericName" : False,
     "endCodes" : "M5 M9 M30",
     "onlySelected" : False,
@@ -515,6 +517,41 @@ class CommandEventHandler(adsk.core.CommandCreatedEventHandler):
             )
             label.tooltip = input.tooltip
             label.tooltipDescription = input.tooltipDescription
+
+            # replacement for the post processor's Tn/M6 command
+            input = inputGroup.children.addTextBoxCommandInput("toolCommandLabel",
+                                                               "",
+                                                               "Replacement for T# M6:",
+                                                               1,
+                                                               True)
+            input.isFullWidth = True
+            label = input
+            input = inputGroup.children.addStringValueInput("toolCommand", "", docSettings["toolCommand"])
+            input.isEnabled = docSettings["splitSetup"]
+            input.isFullWidth = True
+            input.tooltip = "Custom Tool Change Command"
+            input.tooltipDescription = (
+                "Replaces generated tool-change lines. Use {tool} "
+                "where the actual tool number should appear, for example "
+                "T{tool} M6. Separate multiple output lines with a colon (:). "
+                "Leave blank to remove included tool-change commands. Use the "
+                "checkbox below to include or omit the first tool change."
+                )
+            label.tooltip = input.tooltip
+            label.tooltipDescription = input.tooltipDescription
+
+            input = inputGroup.children.addBoolValueInput("includeFirstToolChange",
+                                                          "Include first tool change",
+                                                          True,
+                                                          "",
+                                                          docSettings["includeFirstToolChange"])
+            input.isEnabled = docSettings["splitSetup"]
+            input.tooltip = "Include Initial Tool Change"
+            input.tooltipDescription = (
+                "When enabled, the first operation uses the configured pre-change "
+                "G-code and tool-change replacement. When disabled, the first "
+                "Tn/M6 is omitted regardless of its tool number."
+                )
            
             # text box as a label for operation end commands
             input = inputGroup.children.addTextBoxCommandInput("endLabel", 
@@ -738,7 +775,10 @@ class CommandInputChangedHandler(adsk.core.InputChangedEventHandler):
             if input.id == "splitSetup":
                 inputs.itemById("combineTool").isEnabled = input.value
                 inputs.itemById("toolChange").isEnabled = input.value
+                inputs.itemById("toolCommand").isEnabled = input.value
+                inputs.itemById("includeFirstToolChange").isEnabled = input.value
                 inputs.itemById("toolLabel").isEnabled = input.value
+                inputs.itemById("toolCommandLabel").isEnabled = input.value
                 inputs.itemById("endCodes").isEnabled = input.value
                 inputs.itemById("endLabel").isEnabled = input.value
                 inputs.itemById("fastZ").isEnabled = input.value
@@ -1188,7 +1228,8 @@ def PostProcessSetup(fname, setup, setupFolder, docSettings, program):
                 fNum = match["N"] != None
 
                 if (match["T"] != None):
-                    if not fFirst and len(toolChange) != 0:
+                    toolNumber = match["T"]
+                    if (not fFirst or docSettings["includeFirstToolChange"]) and len(toolChange) != 0:
                         # have tool change G-codes to add
                         if fToolChangeNum:
                             # Add line number to tool change
@@ -1209,6 +1250,41 @@ def PostProcessSetup(fname, setup, setupFolder, docSettings, program):
                     return "Tool change G-code (Txx) not found; this post processor is not compatible with Post Process All."
                 if line[0] == "\n":
                     fBlankOk = True
+
+            # Remove the post processor's original Tn/M6 request so it can be
+            # replaced below. First-tool inclusion is based on operation order,
+            # not tool number: the first tool may be T1, T2, or any other tool.
+            # Preserve any additional words that share the line (for example S).
+            line = re.sub(r"\bT[0-9]+\b", "", line, flags=re.IGNORECASE)
+            line = re.sub(r"\bM0?6\b", "", line, flags=re.IGNORECASE)
+            line = re.sub(r"[ \t]+", " ", line).strip()
+
+            # For included operations, emit the user-defined replacement. The
+            # placeholder is expanded from the actual T word, not the operation
+            # index, so a sequence such as T2, T7, T1 remains correct.
+            if not fFirst or docSettings["includeFirstToolChange"]:
+                toolCommand = docSettings["toolCommand"].replace("{tool}", toolNumber)
+                toolCommand = toolCommand.replace(":", "\n").strip()
+                if len(toolCommand) != 0:
+                    for code in toolCommand.splitlines():
+                        if fNum:
+                            fileBody.write("N" + str(lineNum) + " ")
+                            lineNum += constLineNumInc
+                        fileBody.write(code.rstrip() + "\n")
+
+            # Preserve any non-tool words that shared the original line. If no
+            # words remain, advance to the first command after the tool change.
+            if len(line) != 0:
+                line += "\n"
+                match = regBody.match(line).groupdict()
+                fNum = False
+            else:
+                lineFull = fileOp.readline()
+                if len(lineFull) == 0:
+                    return "Unexpected end of file after tool change."
+                match = regBody.match(lineFull).groupdict()
+                line = match["line"]
+                fNum = match["N"] != None
 
             # We're done with the head, move on to the body
             # Initialize rapid move optimizations
